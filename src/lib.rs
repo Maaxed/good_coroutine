@@ -4,6 +4,7 @@ mod co_never;
 mod co_box;
 mod co_loop;
 mod co_concurrent;
+mod co_runner;
 
 pub use co_function::*;
 pub use co_chain::*;
@@ -11,6 +12,7 @@ pub use co_never::*;
 pub use co_box::*;
 pub use co_loop::*;
 pub use co_concurrent::*;
+pub use co_runner::*;
 
 pub mod prelude
 {
@@ -62,39 +64,34 @@ where
 	coroutine.init(ctx, ())
 }
 
-pub struct CoNextFrame(bool);
+pub struct CoNextFrame;
 
 impl<Ctx> Coroutine<Ctx, ()> for CoNextFrame
 {
 	type Output = ();
-	type State = Self;
+	type State = CoCurrentFrame;
 
-	fn init(self, ctx: &mut Ctx, _i: ()) -> CoResult<Self::State, Self::Output>
+	fn init(self, _ctx: &mut Ctx, _i: ()) -> CoResult<Self::State, Self::Output>
 	{
-		self.resume(ctx)
+		CoResult::RunNextFrame(CoCurrentFrame)
 	}
 }
 
-impl<Ctx> CoroutineState<Ctx> for CoNextFrame
+pub struct CoCurrentFrame;
+
+impl<Ctx> CoroutineState<Ctx> for CoCurrentFrame
 {
 	type Output = ();
 
 	fn resume(self, _ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
-		if self.0
-		{
-			co_return(())
-		}
-		else
-		{
-			CoResult::RunNextFrame(Self(true))
-		}
+		co_return(())
 	}
 }
 
 pub fn co_next_frame() -> CoNextFrame
 {
-	CoNextFrame(false)
+	CoNextFrame
 }
 
 

@@ -2,7 +2,7 @@ use super::*;
 
 pub type CoBox<Ctx, Output> = Box<dyn DynCoroutine<Ctx, Output>>;
 
-pub fn co_box<Ctx, C, M>(coroutine: C) -> CoBox<Ctx, C::Output>
+pub fn co_box<Ctx, C>(coroutine: C) -> CoBox<Ctx, C::Output>
 where
 	C: Coroutine<Ctx, ()> + 'static,
 	C::State: 'static,
