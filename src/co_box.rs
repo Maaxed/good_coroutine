@@ -1,43 +1,68 @@
 use super::*;
 
-pub type CoBox<Ctx> = Box<dyn DynCoroutine<Ctx>>;
+pub type CoBox<Ctx, Output> = Box<dyn DynCoroutine<Ctx, Output>>;
 
-pub fn co_box<Ctx, Co, M>(coroutine: Co) -> CoBox<Ctx>
+pub fn co_box<Ctx, Co, M>(coroutine: Co) -> CoBox<Ctx, <Co::Coroutine as Coroutine<Ctx, ()>>::Output>
 where
-	Co: IntoCoroutine<Ctx, M>,
+	Co: IntoCoroutine<Ctx, (), M>,
 	Co::Coroutine: 'static,
+	<Co::Coroutine as Coroutine<Ctx, ()>>::State: 'static,
 {
-	Box::new(DynCoroutineImpl(coroutine.into_coroutine()))
+	Box::new(DynCoroutineImpl::Fn(coroutine.into_coroutine()))
 }
 
-pub trait DynCoroutine<Ctx>
+pub trait DynCoroutine<Ctx, Output>
 {
-	fn resume_dyn(self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx>>;
+	fn resume_dyn(self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx, Output>, Output>;
 }
 
-impl<Ctx> Coroutine<Ctx> for CoBox<Ctx>
+impl<Ctx, Output> Coroutine<Ctx, ()> for CoBox<Ctx, Output>
 {
-	fn resume(self, ctx: &mut Ctx) -> CoResult<Self>
+	type Output = Output;
+	type State = Self;
+
+	fn init(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self, Self::Output>
+	{
+		self.resume_dyn(ctx)
+	}
+}
+
+impl<Ctx, Output> CoroutineState<Ctx> for CoBox<Ctx, Output>
+{
+	type Output = Output;
+
+	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
 		self.resume_dyn(ctx)
 	}
 }
 
 
-struct DynCoroutineImpl<T>(T);
-
-impl<Ctx, Co> DynCoroutine<Ctx> for DynCoroutineImpl<Co>
-where
-	Co: Coroutine<Ctx> + 'static,
+enum DynCoroutineImpl<C, CS>
 {
-	fn resume_dyn(mut self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx>>
+	Fn(C),
+	State(CS),
+}
+
+impl<Ctx, C, Output> DynCoroutine<Ctx, Output> for DynCoroutineImpl<C, C::State>
+where
+	C: Coroutine<Ctx, (), Output = Output> + 'static,
+	C::State: 'static,
+{
+	fn resume_dyn(mut self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx, Output>, Output>
 	{
-		match self.0.resume(ctx)
+		let res = match *self
 		{
-			CoResult::Stop => CoResult::Stop,
+			Self::Fn(co) => co.init(ctx, ()),
+			Self::State(co) => co.resume(ctx),
+		};
+
+		match res
+		{
+			CoResult::Stop(res) => CoResult::Stop(res),
 			CoResult::RunNextFrame(co) =>
 			{
-				self.0 = co; // Reuse the same Box to avoid new allocation
+				*self = DynCoroutineImpl::State(co); // Reuse the same Box to avoid new allocation
 				CoResult::RunNextFrame(self)
 			},
 		}

@@ -16,62 +16,74 @@ pub use co_loop::*;
 pub use co_vec::*;
 pub use co_parallel::*;
 
-#[must_use]
-pub trait Coroutine<Ctx>: Sized
+
+pub trait Coroutine<Ctx, Input>: Sized
 {
-	fn resume(self, ctx: &mut Ctx) -> CoResult<Self>;
+	type Output;
+	type State: CoroutineState<Ctx, Output = Self::Output>;
+
+	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>;
+}
+
+#[must_use]
+pub trait CoroutineState<Ctx>: Sized
+{
+	type Output;
+
+	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>;
 }
 
 
 #[must_use]
-pub enum CoResult<Co = CoNever>
+pub enum CoResult<Co, Output>
 {
-	Stop,
+	Stop(Output),
 	RunNextFrame(Co),
 }
 
-impl<Co> From<CoResult<Co>> for Option<Co>
+
+pub fn co_return<Co, Output>(res: Output) -> CoResult<Co, Output>
 {
-	fn from(value: CoResult<Co>) -> Self
-	{
-		match value
-		{
-			CoResult::Stop => None,
-			CoResult::RunNextFrame(co) => Some(co),
-		}
-	}
+	CoResult::Stop(res)
 }
 
-
-pub trait IntoCoroutine<Ctx, Marker>: Sized
+pub trait IntoCoroutine<Ctx, Input, Marker>: Sized
 {
-	type Coroutine: Coroutine<Ctx>;
+	type Coroutine: Coroutine<Ctx, Input>;
 
 	fn into_coroutine(self) -> Self::Coroutine;
 }
 
-
-pub fn co_return<Co>() -> CoResult<Co>
-{
-	CoResult::Stop
-}
-
-pub fn co_yield<Ctx, Co, M>(coroutine: Co, ctx: &mut Ctx) -> CoResult<Co::Coroutine>
+pub fn co_yield<Ctx, Co, C, M>(coroutine: Co, ctx: &mut Ctx) -> CoResult<C::State, C::Output>
 where
-	Co: IntoCoroutine<Ctx, M>,
+	Co: IntoCoroutine<Ctx, (), M, Coroutine = C>,
+	C: Coroutine<Ctx, ()>,
 {
-	coroutine.into_coroutine().resume(ctx)
+	coroutine.into_coroutine().init(ctx, ())
 }
 
 pub struct CoNextFrame(bool);
 
-impl<Ctx> Coroutine<Ctx> for CoNextFrame
+impl<Ctx> Coroutine<Ctx, ()> for CoNextFrame
 {
-	fn resume(self, _ctx: &mut Ctx) -> CoResult<Self>
+	type Output = ();
+	type State = Self;
+
+	fn init(self, ctx: &mut Ctx, _i: ()) -> CoResult<Self::State, Self::Output>
+	{
+		self.resume(ctx)
+	}
+}
+
+impl<Ctx> CoroutineState<Ctx> for CoNextFrame
+{
+	type Output = ();
+
+	fn resume(self, _ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
 		if self.0
 		{
-			co_return()
+			co_return(())
 		}
 		else
 		{
@@ -85,6 +97,7 @@ pub fn co_next_frame() -> CoNextFrame
 	CoNextFrame(false)
 }
 
+
 #[cfg(test)]
 mod tests
 {
@@ -93,31 +106,31 @@ mod tests
 	#[test]
 	fn basic_coroutine()
 	{
-		fn coroutine_function() -> impl Coroutine<Vec<u32>>
+		fn coroutine_function() -> impl Coroutine<Vec<u32>, (), Output = ()>
 		{
-			co_fn(|ctx|
+			co_fn(|ctx: &mut Vec<u32>|
 			{
-				let mut vec = co_vec();
+				let mut vec = Vec::new();
 
 				for i in 0..4
 				{
-					vec.push(co_fn(move |ctx: &mut Vec<u32>| -> CoResult
+					vec.push(co_fn(move |ctx: &mut Vec<u32>| -> CoResult<CoNever, ()>
 					{
 						ctx.push(i);
 
-						co_return()
+						co_return(())
 					}));
 				}
 
-				co_yield(vec, ctx)
+				co_yield(co_vec(vec), ctx)
 			})
 		}
 
 		let coroutine = coroutine_function();
 
 		let mut ctx = Vec::new();
-		let res = coroutine.resume(&mut ctx);
-		assert!(matches!(res, CoResult::Stop));
+		let res = coroutine.init(&mut ctx, ());
+		assert!(matches!(res, CoResult::Stop(())));
 
 		assert_eq!(ctx, vec![0, 1, 2, 3]);
 	}
@@ -125,15 +138,15 @@ mod tests
 	#[test]
 	fn coroutine_next_frame()
 	{
-		fn coroutine_function2() -> impl Coroutine<Vec<u32>>
+		fn coroutine_function2() -> impl Coroutine<Vec<u32>, (), Output = ()>
 		{
-			co_fn(|ctx|
+			co_fn(|ctx: &mut Vec<u32>|
 			{
-				let mut vec = co_vec();
+				let mut vec = Vec::new();
 
 				for i in 0..2
 				{
-					vec.push(co_fn(move |ctx: &mut Vec<u32>|
+					vec.push(co_fn(move |ctx: &mut Vec<u32>| -> CoResult<_, ()>
 					{
 						ctx.push(i);
 
@@ -141,14 +154,14 @@ mod tests
 					}));
 				}
 
-				co_yield(vec, ctx)
+				co_yield(co_vec(vec), ctx)
 			})
 		}
 
 		let coroutine = coroutine_function2();
 		let mut ctx = Vec::new();
 
-		let res = coroutine.resume(&mut ctx);
+		let res = coroutine.init(&mut ctx, ());
 		let CoResult::RunNextFrame(coroutine) = res
 		else
 		{
@@ -165,7 +178,7 @@ mod tests
 		assert_eq!(ctx, vec![0, 1]);
 
 		let res = coroutine.resume(&mut ctx);
-		assert!(matches!(res, CoResult::Stop));
+		assert!(matches!(res, CoResult::Stop(())));
 		assert_eq!(ctx, vec![0, 1]);
 	}
 }

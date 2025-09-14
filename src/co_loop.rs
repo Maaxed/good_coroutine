@@ -8,41 +8,55 @@ pub fn co_loop<C>(c: C) -> CoLoop<C>
 }
 
 /// Rerun the current coroutine next update.
-pub fn co_continue() -> CoLoopResult
+pub fn co_continue<Output>() -> CoLoopResult<Output>
 {
 	CoLoopResult::Continue
 }
 
 /// Stops the execution of the current coroutine.
-pub fn co_break() -> CoLoopResult
+pub fn co_break<Output>(output: Output) -> CoLoopResult<Output>
 {
-	CoLoopResult::Break
+	CoLoopResult::Break(output)
 }
 
 
 pub struct CoLoop<F>(F);
 
-impl<Ctx, F> Coroutine<Ctx> for CoLoop<F>
+impl<Ctx, F, Output> CoroutineState<Ctx> for CoLoop<F>
 where
-	F: FnMut(&mut Ctx) -> CoLoopResult,
+	F: FnMut(&mut Ctx) -> CoLoopResult<Output>,
 {
-	fn resume(mut self, ctx: &mut Ctx) -> CoResult<Self>
+	type Output = Output;
+	fn resume(mut self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
 		let res = (self.0)(ctx);
 
 		match res
 		{
-			CoLoopResult::Break => CoResult::Stop,
+			CoLoopResult::Break(res) => CoResult::Stop(res),
 			CoLoopResult::Continue => CoResult::RunNextFrame(self),
 		}
+	}
+}
+
+impl<Ctx, F, Output> Coroutine<Ctx, ()> for CoLoop<F>
+where
+	F: FnMut(&mut Ctx) -> CoLoopResult<Output>,
+{
+	type Output = Output;
+	type State = Self;
+
+	fn init(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self, Self::Output>
+	{
+		self.resume(ctx)
 	}
 }
 
 
 /// The result of a coroutine loop resumption.
 #[must_use]
-pub enum CoLoopResult
+pub enum CoLoopResult<Output>
 {
-    Continue,
-    Break,
+	Continue,
+	Break(Output),
 }

@@ -4,10 +4,12 @@ use super::*;
 pub enum CoNever
 { }
 
-impl<Ctx> Coroutine<Ctx> for CoNever
+impl<Ctx> CoroutineState<Ctx> for CoNever
 {
-	fn resume(self, _ctx: &mut Ctx) -> crate::CoResult<Self>
+	type Output = ();
+
+	fn resume(self, _ctx: &mut Ctx) -> crate::CoResult<Self, Self::Output>
 	{
-		co_return()
+		co_return(())
 	}
 }

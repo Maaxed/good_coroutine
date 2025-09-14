@@ -1,37 +1,67 @@
 use super::*;
 
-pub struct CoChain<A, B>(Option<A>, B);
+pub struct CoChain<A, B>(A, B);
 
 impl<A, B> CoChain<A, B>
 {
 	pub(crate) fn new(a: A, b: B) -> Self
 	{
-		Self(Some(a), b)
+		Self(a, b)
 	}
 }
 
-impl<Ctx, A, B> Coroutine<Ctx> for CoChain<A, B>
+impl <Ctx, A, B, Input, Mid, Output> Coroutine<Ctx, Input> for CoChain<A, B>
 where
-	A: Coroutine<Ctx>,
-	B: Coroutine<Ctx>,
+	A: Coroutine<Ctx, Input, Output = Mid>,
+	B: Coroutine<Ctx, Mid, Output = Output>,
 {
-	fn resume(self, ctx: &mut Ctx) -> CoResult<Self>
+	type Output = Output;
+	type State = CoChainState<A::State, B, B::State>;
+
+	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>
 	{
 		let Self(a, b) = self;
-
-		if let Some(a) = a
+		match a.init(ctx, input)
 		{
-			match a.resume(ctx)
+			CoResult::RunNextFrame(a) => CoResult::RunNextFrame(CoChainState::AB(a, b)),
+			CoResult::Stop(res) => match b.init(ctx, res)
 			{
-				CoResult::RunNextFrame(co) => return CoResult::RunNextFrame(Self(Some(co), b)),
-				CoResult::Stop => { },
-			}
+				CoResult::RunNextFrame(b) => CoResult::RunNextFrame(CoChainState::B(b)),
+				CoResult::Stop(res) => CoResult::Stop(res),
+			},
 		}
+	}
+}
 
-		match b.resume(ctx)
+pub enum CoChainState<AS, B, BS>
+{
+	AB(AS, B),
+	B(BS),
+}
+
+impl<Ctx, AS, B, Mid, Output> CoroutineState<Ctx> for CoChainState<AS, B, B::State>
+where
+	AS: CoroutineState<Ctx, Output = Mid>,
+	B: Coroutine<Ctx, Mid, Output = Output>,
+{
+	type Output = Output;
+
+	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
+	{
+		let res = match self
 		{
-			CoResult::RunNextFrame(co) => CoResult::RunNextFrame(Self(None, co)),
-			CoResult::Stop => CoResult::Stop,
+			Self::AB(a, b) => match a.resume(ctx)
+			{
+				CoResult::Stop(res) => b.init(ctx, res),
+				CoResult::RunNextFrame(a) => return CoResult::RunNextFrame(Self::AB(a, b)),
+			},
+			Self::B(b) => b.resume(ctx),
+		};
+
+		match res
+		{
+			CoResult::RunNextFrame(b) => CoResult::RunNextFrame(Self::B(b)),
+			CoResult::Stop(res) => CoResult::Stop(res),
 		}
 	}
 }

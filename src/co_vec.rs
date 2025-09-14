@@ -1,36 +1,68 @@
 use super::*;
 use std::collections::VecDeque;
 
-pub fn co_vec<Co>() -> CoVec<Co>
+pub fn co_vec<Co>(vec: Vec<Co>) -> CoVec<Co>
 {
-	CoVec(VecDeque::new())
+	CoVec(vec)
 }
 
-pub struct CoVec<Co>(VecDeque<Co>);
+pub struct CoVec<Co>(Vec<Co>);
 
-impl<Co> CoVec<Co>
+/*impl<Co> CoVec<Co>
 {
-	pub fn push<Ctx, M>(&mut self, co: impl IntoCoroutine<Ctx, M, Coroutine = Co>)
+	pub fn push<Ctx, M>(&mut self, co: Co)
 	{
 		self.0.push_back(co.into_coroutine());
 	}
+}*/
+
+impl<Ctx, Co> Coroutine<Ctx, ()> for CoVec<Co>
+where
+	Co: Coroutine<Ctx, (), Output = ()>,
+{
+	type Output = ();
+	type State = CoVecState<Co, Co::State>;
+
+	fn init(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self::State, Self::Output>
+	{
+		let mut vec: VecDeque<_> = self.0.into();
+		while let Some(co) = vec.pop_front()
+		{
+			if let CoResult::RunNextFrame(co) = co.init(ctx, ())
+			{
+				return CoResult::RunNextFrame(CoVecState(co, vec))
+			}
+		}
+
+		CoResult::Stop(())
+	}
 }
 
-impl<Ctx, Co> Coroutine<Ctx> for CoVec<Co>
+pub struct CoVecState<C, CS>(CS, VecDeque<C>);
+
+impl<Ctx, Co> CoroutineState<Ctx> for CoVecState<Co, Co::State>
 where
-	Co: Coroutine<Ctx>,
+	Co: Coroutine<Ctx, (), Output = ()>,
 {
-	fn resume(mut self, ctx: &mut Ctx) -> CoResult<Self>
+	type Output = ();
+
+	fn resume(mut self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
-		while let Some(co) = self.0.pop_front()
+		if let CoResult::RunNextFrame(co) = self.0.resume(ctx)
 		{
-			if let CoResult::RunNextFrame(co) = co.resume(ctx)
+			self.0 = co;
+			return CoResult::RunNextFrame(self)
+		}
+		
+		while let Some(co) = self.1.pop_front()
+		{
+			if let CoResult::RunNextFrame(co) = co.init(ctx, ())
 			{
-				self.0.push_front(co);
+				self.0 = co;
 				return CoResult::RunNextFrame(self)
 			}
 		}
 
-		CoResult::Stop
+		CoResult::Stop(())
 	}
 }
