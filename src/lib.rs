@@ -1,20 +1,16 @@
-mod impls;
 mod co_function;
 mod co_chain;
 mod co_never;
 mod co_box;
 mod co_loop;
-mod co_vec;
-mod co_parallel;
+mod co_concurrent;
 
-pub use impls::*;
 pub use co_function::*;
 pub use co_chain::*;
 pub use co_never::*;
 pub use co_box::*;
 pub use co_loop::*;
-pub use co_vec::*;
-pub use co_parallel::*;
+pub use co_concurrent::*;
 
 
 pub trait Coroutine<Ctx, Input>: Sized
@@ -47,19 +43,11 @@ pub fn co_return<Co, Output>(res: Output) -> CoResult<Co, Output>
 	CoResult::Stop(res)
 }
 
-pub trait IntoCoroutine<Ctx, Input, Marker>: Sized
-{
-	type Coroutine: Coroutine<Ctx, Input>;
-
-	fn into_coroutine(self) -> Self::Coroutine;
-}
-
-pub fn co_yield<Ctx, Co, C, M>(coroutine: Co, ctx: &mut Ctx) -> CoResult<C::State, C::Output>
+pub fn co_yield<Ctx, C>(coroutine: C, ctx: &mut Ctx) -> CoResult<C::State, C::Output>
 where
-	Co: IntoCoroutine<Ctx, (), M, Coroutine = C>,
 	C: Coroutine<Ctx, ()>,
 {
-	coroutine.into_coroutine().init(ctx, ())
+	coroutine.init(ctx, ())
 }
 
 pub struct CoNextFrame(bool);
@@ -98,6 +86,42 @@ pub fn co_next_frame() -> CoNextFrame
 }
 
 
+pub struct IgnoreOutput<T>(T);
+
+impl<Ctx, T, Input> Coroutine<Ctx, Input> for IgnoreOutput<T>
+	where
+		T: Coroutine<Ctx, Input>
+{
+	type Output = ();
+	type State = IgnoreOutput<T::State>;
+
+	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>
+	{
+		match self.0.init(ctx, input)
+		{
+			CoResult::Stop(_res) => CoResult::Stop(()),
+			CoResult::RunNextFrame(co) => CoResult::RunNextFrame(IgnoreOutput(co))
+		}
+	}
+}
+
+impl<Ctx, T> CoroutineState<Ctx> for IgnoreOutput<T>
+	where
+		T: CoroutineState<Ctx>
+{
+	type Output = ();
+
+	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
+	{
+		match self.0.resume(ctx)
+		{
+			CoResult::Stop(_res) => CoResult::Stop(()),
+			CoResult::RunNextFrame(co) => CoResult::RunNextFrame(IgnoreOutput(co))
+		}
+	}
+}
+
+
 #[cfg(test)]
 mod tests
 {
@@ -114,15 +138,13 @@ mod tests
 
 				for i in 0..4
 				{
-					vec.push(co_fn(move |ctx: &mut Vec<u32>| -> CoResult<CoNever, ()>
+					vec.push(co_fn(move |ctx: &mut Vec<u32>|
 					{
 						ctx.push(i);
-
-						co_return(())
 					}));
 				}
 
-				co_yield(co_vec(vec), ctx)
+				co_yield(co_chain(vec), ctx)
 			})
 		}
 
@@ -146,7 +168,7 @@ mod tests
 
 				for i in 0..2
 				{
-					vec.push(co_fn(move |ctx: &mut Vec<u32>| -> CoResult<_, ()>
+					vec.push(co_fn(move |ctx: &mut Vec<u32>|
 					{
 						ctx.push(i);
 
@@ -154,7 +176,7 @@ mod tests
 					}));
 				}
 
-				co_yield(co_vec(vec), ctx)
+				co_yield(co_chain(vec), ctx)
 			})
 		}
 

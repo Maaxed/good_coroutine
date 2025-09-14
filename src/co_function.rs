@@ -34,7 +34,7 @@ pub trait CoFn<Ctx, Input, M>
 	fn co_call(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>;
 }
 
-impl<Ctx, F, Input, Output, C> CoFn<Ctx, Input, fn(&mut Ctx, Input) -> Output> for F
+impl<Ctx, F, Input, Output, C> CoFn<Ctx, Input, fn(&mut Ctx, Input) -> CoResult<C, Output>> for F
 where
 	F: FnOnce(&mut Ctx, Input) -> CoResult<C, Output>
 {
@@ -73,28 +73,30 @@ where
 	}
 }
 
-impl<Ctx, F, Output> CoFn<Ctx, (), fn(&mut Ctx) -> (Output, )> for F
+impl<Ctx, F> CoFn<Ctx, (), fn(&mut Ctx)> for F
 where
-	F: FnOnce(&mut Ctx) -> (Output, )
+	F: FnOnce(&mut Ctx)
 {
-	type Output = Output;
+	type Output = ();
 	type State = CoNever;
 
 	fn co_call(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self::State, Self::Output>
 	{
-		co_return(self(ctx).0)
+		self(ctx);
+		co_return(())
 	}
 }
 
-impl<Ctx, F, Output> CoFn<Ctx, (), fn() -> (Output, )> for F
+impl<Ctx, F> CoFn<Ctx, (), fn()> for F
 where
-	F: FnOnce() -> (Output, )
+	F: FnOnce()
 {
-	type Output = Output;
+	type Output = ();
 	type State = CoNever;
 
 	fn co_call(self, _ctx: &mut Ctx, _input: ()) -> CoResult<Self::State, Self::Output>
 	{
-		co_return(self().0)
+		self();
+		co_return(())
 	}
 }

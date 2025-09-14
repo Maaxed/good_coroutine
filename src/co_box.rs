@@ -2,13 +2,12 @@ use super::*;
 
 pub type CoBox<Ctx, Output> = Box<dyn DynCoroutine<Ctx, Output>>;
 
-pub fn co_box<Ctx, Co, M>(coroutine: Co) -> CoBox<Ctx, <Co::Coroutine as Coroutine<Ctx, ()>>::Output>
+pub fn co_box<Ctx, C, M>(coroutine: C) -> CoBox<Ctx, C::Output>
 where
-	Co: IntoCoroutine<Ctx, (), M>,
-	Co::Coroutine: 'static,
-	<Co::Coroutine as Coroutine<Ctx, ()>>::State: 'static,
+	C: Coroutine<Ctx, ()> + 'static,
+	C::State: 'static,
 {
-	Box::new(DynCoroutineImpl::Fn(coroutine.into_coroutine()))
+	Box::new(DynCoroutineImpl::Fn(coroutine))
 }
 
 pub trait DynCoroutine<Ctx, Output>
