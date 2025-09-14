@@ -12,6 +12,18 @@ pub use co_box::*;
 pub use co_loop::*;
 pub use co_concurrent::*;
 
+pub mod prelude
+{
+	pub use crate::{
+		Coroutine,
+		CoResult,
+		co_return,
+		co_yield,
+		co_fn,
+		co_chain,
+		co_concurrent,
+	};
+}
 
 pub trait Coroutine<Ctx, Input>: Sized
 {
