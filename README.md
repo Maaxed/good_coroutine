@@ -5,7 +5,7 @@ A library for running coroutines in rust designed for games
 
 ## Goal
 
-The main motivation behind this library is to allows you to spread the execution of a function across several frames.
+The main motivation behind this library is to allow you to spread the execution of a function across several frames.
 It also helps with managing and running functions in sequence over time.
 good_coroutine is meant for concurrent execution of coroutines but not for parallel execution.
 
