@@ -17,12 +17,14 @@ pub use co_runner::*;
 pub mod prelude
 {
 	pub use crate::{
+		Coroutine,
 		CoResult,
 		co_return,
 		co_yield,
 		co_fn,
-		co_chain,
-		co_concurrent,
+		co_next_frame,
+		co_chain::co_chain,
+		co_concurrent::co_concurrent,
 	};
 }
 
@@ -102,7 +104,7 @@ where
 #[cfg(test)]
 mod tests
 {
-	use crate::*;
+	use crate::prelude::*;
 
 	#[test]
 	fn basic_coroutine()
