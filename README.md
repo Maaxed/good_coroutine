@@ -31,7 +31,7 @@ fn coroutine_function() -> impl Coroutine<(), Output = ()>
 			// Wait next frame then print the number i in the console
 			vec.push(co_chain((
 				co_next_frame(),
-				move |()| print_number(i),
+				print_number(i),
 			)));
 		}
 
