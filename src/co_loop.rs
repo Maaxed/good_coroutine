@@ -22,7 +22,7 @@ pub fn co_break<Output>(output: Output) -> CoLoopResult<Output>
 
 pub struct CoLoop<F>(F);
 
-impl<Ctx, F, Output> CoroutineState<Ctx> for CoLoop<F>
+impl<Ctx, F, Output> Coroutine<Ctx> for CoLoop<F>
 where
 	F: FnMut(&mut Ctx) -> CoLoopResult<Output>,
 {
@@ -36,19 +36,6 @@ where
 			CoLoopResult::Break(res) => CoResult::Stop(res),
 			CoLoopResult::Continue => CoResult::RunNextFrame(self),
 		}
-	}
-}
-
-impl<Ctx, F, Output> Coroutine<Ctx, ()> for CoLoop<F>
-where
-	F: FnMut(&mut Ctx) -> CoLoopResult<Output>,
-{
-	type Output = Output;
-	type State = Self;
-
-	fn init(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self, Self::Output>
-	{
-		self.resume(ctx)
 	}
 }
 

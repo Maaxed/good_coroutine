@@ -17,7 +17,6 @@ pub use co_runner::*;
 pub mod prelude
 {
 	pub use crate::{
-		Coroutine,
 		CoResult,
 		co_return,
 		co_yield,
@@ -27,16 +26,8 @@ pub mod prelude
 	};
 }
 
-pub trait Coroutine<Ctx, Input>: Sized
-{
-	type Output;
-	type State: CoroutineState<Ctx, Output = Self::Output>;
-
-	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>;
-}
-
 #[must_use]
-pub trait CoroutineState<Ctx>: Sized
+pub trait Coroutine<Ctx>: Sized
 {
 	type Output;
 
@@ -57,66 +48,43 @@ pub fn co_return<Co, Output>(res: Output) -> CoResult<Co, Output>
 	CoResult::Stop(res)
 }
 
-pub fn co_yield<Ctx, C>(coroutine: C, ctx: &mut Ctx) -> CoResult<C::State, C::Output>
+pub fn co_yield<Ctx, C>(coroutine: C, ctx: &mut Ctx) -> CoResult<C, C::Output>
 where
-	C: Coroutine<Ctx, ()>,
+	C: Coroutine<Ctx>
 {
-	coroutine.init(ctx, ())
+	coroutine.resume(ctx)
 }
 
-pub struct CoNextFrame;
+pub struct CoNextFrame(bool);
 
-impl<Ctx> Coroutine<Ctx, ()> for CoNextFrame
-{
-	type Output = ();
-	type State = CoCurrentFrame;
-
-	fn init(self, _ctx: &mut Ctx, _i: ()) -> CoResult<Self::State, Self::Output>
-	{
-		CoResult::RunNextFrame(CoCurrentFrame)
-	}
-}
-
-pub struct CoCurrentFrame;
-
-impl<Ctx> CoroutineState<Ctx> for CoCurrentFrame
+impl<Ctx> Coroutine<Ctx> for CoNextFrame
 {
 	type Output = ();
 
 	fn resume(self, _ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
-		co_return(())
+		if self.0
+		{
+			co_return(())
+		}
+		else
+		{
+			CoResult::RunNextFrame(CoNextFrame(true))
+		}
 	}
 }
 
 pub fn co_next_frame() -> CoNextFrame
 {
-	CoNextFrame
+	CoNextFrame(false)
 }
 
 
 pub struct IgnoreOutput<T>(T);
 
-impl<Ctx, T, Input> Coroutine<Ctx, Input> for IgnoreOutput<T>
-	where
-		T: Coroutine<Ctx, Input>
-{
-	type Output = ();
-	type State = IgnoreOutput<T::State>;
-
-	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>
-	{
-		match self.0.init(ctx, input)
-		{
-			CoResult::Stop(_res) => CoResult::Stop(()),
-			CoResult::RunNextFrame(co) => CoResult::RunNextFrame(IgnoreOutput(co))
-		}
-	}
-}
-
-impl<Ctx, T> CoroutineState<Ctx> for IgnoreOutput<T>
-	where
-		T: CoroutineState<Ctx>
+impl<Ctx, T> Coroutine<Ctx> for IgnoreOutput<T>
+where
+	T: Coroutine<Ctx>
 {
 	type Output = ();
 
@@ -139,7 +107,7 @@ mod tests
 	#[test]
 	fn basic_coroutine()
 	{
-		fn coroutine_function() -> impl Coroutine<Vec<u32>, (), Output = ()>
+		fn coroutine_function() -> impl Coroutine<Vec<u32>, Output = ()>
 		{
 			co_fn(|ctx: &mut Vec<u32>|
 			{
@@ -160,7 +128,7 @@ mod tests
 		let coroutine = coroutine_function();
 
 		let mut ctx = Vec::new();
-		let res = coroutine.init(&mut ctx, ());
+		let res = coroutine.resume(&mut ctx);
 		assert!(matches!(res, CoResult::Stop(())));
 
 		assert_eq!(ctx, vec![0, 1, 2, 3]);
@@ -169,7 +137,7 @@ mod tests
 	#[test]
 	fn coroutine_next_frame()
 	{
-		fn coroutine_function2() -> impl Coroutine<Vec<u32>, (), Output = ()>
+		fn coroutine_function2() -> impl Coroutine<Vec<u32>, Output = ()>
 		{
 			co_fn(|ctx: &mut Vec<u32>|
 			{
@@ -192,7 +160,7 @@ mod tests
 		let coroutine = coroutine_function2();
 		let mut ctx = Vec::new();
 
-		let res = coroutine.init(&mut ctx, ());
+		let res = coroutine.resume(&mut ctx);
 		let CoResult::RunNextFrame(coroutine) = res
 		else
 		{

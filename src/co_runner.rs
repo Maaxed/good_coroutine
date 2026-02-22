@@ -48,8 +48,7 @@ impl<Ctx> CoroutineRunner<Ctx>
 
 	pub fn push<C>(&mut self, co: C)
 	where
-		C: Coroutine<Ctx, (), Output = ()> + 'static,
-		C::State: 'static,
+		C: Coroutine<Ctx, Output = ()> + 'static,
 	{
 		self.push_boxed(co_box(co));
 	}

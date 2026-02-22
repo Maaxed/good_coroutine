@@ -1,13 +1,12 @@
 use super::*;
 
-pub type CoBox<Ctx, Output> = Box<dyn DynCoroutine<Ctx, Output>>;
+pub type CoBox<Ctx, Output = ()> = Box<dyn DynCoroutine<Ctx, Output>>;
 
 pub fn co_box<Ctx, C>(coroutine: C) -> CoBox<Ctx, C::Output>
 where
-	C: Coroutine<Ctx, ()> + 'static,
-	C::State: 'static,
+	C: Coroutine<Ctx> + 'static,
 {
-	Box::new(DynCoroutineImpl::Fn(coroutine))
+	Box::new(DynCoroutineImpl(coroutine))
 }
 
 pub trait DynCoroutine<Ctx, Output>
@@ -15,18 +14,7 @@ pub trait DynCoroutine<Ctx, Output>
 	fn resume_dyn(self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx, Output>, Output>;
 }
 
-impl<Ctx, Output> Coroutine<Ctx, ()> for CoBox<Ctx, Output>
-{
-	type Output = Output;
-	type State = Self;
-
-	fn init(self, ctx: &mut Ctx, _input: ()) -> CoResult<Self, Self::Output>
-	{
-		self.resume_dyn(ctx)
-	}
-}
-
-impl<Ctx, Output> CoroutineState<Ctx> for CoBox<Ctx, Output>
+impl<Ctx, Output> Coroutine<Ctx> for CoBox<Ctx, Output>
 {
 	type Output = Output;
 
@@ -37,31 +25,20 @@ impl<Ctx, Output> CoroutineState<Ctx> for CoBox<Ctx, Output>
 }
 
 
-enum DynCoroutineImpl<C, CS>
-{
-	Fn(C),
-	State(CS),
-}
+struct DynCoroutineImpl<C>(C);
 
-impl<Ctx, C, Output> DynCoroutine<Ctx, Output> for DynCoroutineImpl<C, C::State>
+impl<Ctx, C, Output> DynCoroutine<Ctx, Output> for DynCoroutineImpl<C>
 where
-	C: Coroutine<Ctx, (), Output = Output> + 'static,
-	C::State: 'static,
+	C: Coroutine<Ctx, Output = Output> + 'static,
 {
 	fn resume_dyn(mut self: Box<Self>, ctx: &mut Ctx) -> CoResult<CoBox<Ctx, Output>, Output>
 	{
-		let res = match *self
-		{
-			Self::Fn(co) => co.init(ctx, ()),
-			Self::State(co) => co.resume(ctx),
-		};
-
-		match res
+		match self.0.resume(ctx)
 		{
 			CoResult::Stop(res) => CoResult::Stop(res),
 			CoResult::RunNextFrame(co) =>
 			{
-				*self = DynCoroutineImpl::State(co); // Reuse the same Box to avoid new allocation
+				self.0 = co; // Reuse the same Box to avoid new allocation
 				CoResult::RunNextFrame(self)
 			},
 		}

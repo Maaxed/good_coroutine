@@ -1,68 +1,77 @@
 use super::*;
-use std::collections::VecDeque;
-use std::marker::PhantomData;
 use variadics_please::{all_tuples, all_tuples_with_size};
 
 
-pub fn co_chain<Ctx, Co, Input, C>(coroutine: Co) -> Co::Coroutine
+pub fn co_chain<Ctx, Co>(coroutine: Co) -> IgnoreOutput<Co::Coroutine>
 where
-	Co: IntoCoChain<Ctx, Input, Coroutine = C>,
-	C: Coroutine<Ctx, ()>,
+	Co: IntoCoChain<Ctx>,
+{
+	IgnoreOutput(co_chain_with_output(coroutine))
+}
+
+pub fn co_chain_with_output<Ctx, Co>(coroutine: Co) -> Co::Coroutine
+where
+	Co: IntoCoChain<Ctx>,
 {
 	coroutine.into_co_chain()
 }
 
-pub struct CoChain<A, B>(A, B);
-
-impl <Ctx, A, B, Input, Mid, Output> Coroutine<Ctx, Input> for CoChain<A, B>
-where
-	A: Coroutine<Ctx, Input, Output = Mid>,
-	B: Coroutine<Ctx, Mid, Output = Output>,
+pub enum CoChain<A, B, F>
 {
-	type Output = Output;
-	type State = CoChainState<A::State, B, B::State>;
-
-	fn init(self, ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>
-	{
-		let Self(a, b) = self;
-		match a.init(ctx, input)
-		{
-			CoResult::RunNextFrame(a) => CoResult::RunNextFrame(CoChainState::AB(a, b)),
-			CoResult::Stop(res) => match b.init(ctx, res)
-			{
-				CoResult::RunNextFrame(b) => CoResult::RunNextFrame(CoChainState::B(b)),
-				CoResult::Stop(res) => CoResult::Stop(res),
-			},
-		}
-	}
+	A(A, F),
+	B(B),
 }
 
-pub enum CoChainState<AS, B, BS>
-{
-	AB(AS, B),
-	B(BS),
-}
-
-impl<Ctx, AS, B, Mid, Output> CoroutineState<Ctx> for CoChainState<AS, B, B::State>
+impl <Ctx, A, B, F, Output> Coroutine<Ctx> for CoChain<A, B, F>
 where
-	AS: CoroutineState<Ctx, Output = Mid>,
-	B: Coroutine<Ctx, Mid, Output = Output>,
+	A: Coroutine<Ctx>,
+	B: Coroutine<Ctx, Output = Output>,
+	F: FnOnce(A::Output) -> B,
 {
 	type Output = Output;
 
 	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
-		let res = match self
+		let b = match self
 		{
-			Self::AB(a, b) => match a.resume(ctx)
+			Self::A(a, f) => match a.resume(ctx)
 			{
-				CoResult::Stop(res) => b.init(ctx, res),
-				CoResult::RunNextFrame(a) => return CoResult::RunNextFrame(Self::AB(a, b)),
+				CoResult::Stop(res) => f(res),
+				CoResult::RunNextFrame(a) => return CoResult::RunNextFrame(Self::A(a, f)),
 			},
-			Self::B(b) => b.resume(ctx),
+			Self::B(b) => b,
 		};
 
-		match res
+		match b.resume(ctx)
+		{
+			CoResult::RunNextFrame(b) => CoResult::RunNextFrame(Self::B(b)),
+			CoResult::Stop(res) => CoResult::Stop(res),
+		}
+	}
+}
+
+pub struct IdentityFn<T>(T);
+
+impl <Ctx, A, B, Output> Coroutine<Ctx> for CoChain<A, B, IdentityFn<B>>
+where
+	A: Coroutine<Ctx>,
+	B: Coroutine<Ctx, Output = Output>,
+{
+	type Output = Output;
+
+	fn resume(self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
+	{
+		let b = match self
+		{
+			Self::A(a, f) => match a.resume(ctx)
+			{
+				CoResult::Stop(_res) => f.0,
+				CoResult::RunNextFrame(a) => return CoResult::RunNextFrame(Self::A(a, f)),
+			},
+			Self::B(b) => b,
+		};
+
+		match b.resume(ctx)
 		{
 			CoResult::RunNextFrame(b) => CoResult::RunNextFrame(Self::B(b)),
 			CoResult::Stop(res) => CoResult::Stop(res),
@@ -72,9 +81,9 @@ where
 
 
 
-pub trait IntoCoChain<Ctx, Input>: Sized
+pub trait IntoCoChain<Ctx>: Sized
 {
-	type Coroutine: Coroutine<Ctx, Input>;
+	type Coroutine: Coroutine<Ctx>;
 
 	fn into_co_chain(self) -> Self::Coroutine;
 }
@@ -84,32 +93,35 @@ macro_rules! impl_co_chain_tuple
 {
 	($(($Co:ident, $var:ident)),*) =>
 	{
-		impl<Ctx, Input, CoFirst, $($Co),*> IntoCoChain<Ctx, Input> for (CoFirst, $($Co,)*)
+		impl<Ctx, Chain, CoLast, F, I, $($Co,)*> IntoCoChain<Ctx> for ($($Co,)* F,)
 		where
-			CoFirst: Coroutine<Ctx, Input>,
-			($($Co,)*): IntoCoChain<Ctx, CoFirst::Output>
+			F: FnOnce(I) -> CoLast,
+			CoLast: Coroutine<Ctx>,
+			Chain: Coroutine<Ctx, Output = I>,
+			($($Co,)*): IntoCoChain<Ctx, Coroutine = Chain>
 		{
 			type Coroutine = CoChain<
-				CoFirst,
-				<($($Co,)*) as IntoCoChain<Ctx, CoFirst::Output>>::Coroutine
+				Chain,
+				CoLast,
+				F
 			>;
 
 			fn into_co_chain(self) -> Self::Coroutine
 			{
 				let (
-					var_first,
 					$( $var, )*
+					var_last,
 				) = self;
 
-				CoChain(var_first, ($($var,)*).into_co_chain())
+				CoChain::A(($($var,)*).into_co_chain(), var_last)
 			}
 		}
 	}
 }
 
-impl<Ctx, Input, T> IntoCoChain<Ctx, Input> for (T,)
+impl<Ctx, T> IntoCoChain<Ctx> for (T,)
 where
-	T: Coroutine<Ctx, Input>,
+	T: Coroutine<Ctx>,
 {
 	type Coroutine = T;
 
@@ -126,28 +138,29 @@ macro_rules! impl_co_chain_array
 {
 	($size:tt, $(($Co:ident, $var:ident)),*) =>
 	{
-		impl<Ctx, Input, Co> IntoCoChain<Ctx, Input> for [Co; $size]
+		impl<Ctx, Co> IntoCoChain<Ctx> for [Co; $size]
 		where
-			Co: Coroutine<Ctx, Input, Output = Input>,
+			Co: Coroutine<Ctx>,
 		{
 			type Coroutine = CoChain<
+				<[Co; $size-1] as IntoCoChain<Ctx>>::Coroutine,
 				Co,
-				<[Co; $size-1] as IntoCoChain<Ctx, Input>>::Coroutine
+				IdentityFn<Co>,
 			>;
 
 			fn into_co_chain(self) -> Self::Coroutine
 			{
-				let [var_first, var_tail @ ..] = self;
+				let [var_head @ .., var_last] = self;
 
-				CoChain(var_first, var_tail.into_co_chain())
+				CoChain::A(var_head.into_co_chain(), IdentityFn(var_last))
 			}
 		}
 	}
 }
 
-impl<Ctx, Input, Co> IntoCoChain<Ctx, Input> for [Co; 1]
+impl<Ctx, Co> IntoCoChain<Ctx> for [Co; 1]
 where
-	Co: Coroutine<Ctx, Input, Output = Input>,
+	Co: Coroutine<Ctx>,
 {
 	type Coroutine = Co;
 
@@ -158,108 +171,79 @@ where
 	}
 }
 
-pub struct CoIdentity;
-
-impl<Ctx, Input> Coroutine<Ctx, Input> for CoIdentity
-{
-	type Output = Input;
-	type State = CoNeverWithOutput<Input>;
-
-	fn init(self, _ctx: &mut Ctx, input: Input) -> CoResult<Self::State, Self::Output>
-	{
-		co_return(input)
-	}
-}
-
-impl<Ctx, Input, Co> IntoCoChain<Ctx, Input> for [Co; 0]
-where
-	Co: Coroutine<Ctx, Input, Output = Input>,
-{
-	type Coroutine = CoIdentity;
-
-	fn into_co_chain(self) -> Self::Coroutine
-	{
-		CoIdentity
-	}
-}
-
 all_tuples_with_size!(impl_co_chain_array, 2, 10, Co, var);
 
 
 
-impl<Ctx, Co, Input> IntoCoChain<Ctx, Input> for Vec<Co>
+impl<Ctx, Co> IntoCoChain<Ctx> for Vec<Co>
 where
-	Co: Coroutine<Ctx, Input, Output = Input>,
+	Co: Coroutine<Ctx>,
 {
-	type Coroutine = CoChainVec<Co>;
+	type Coroutine = CoChainIter<std::vec::IntoIter<Co>>;
 
 	fn into_co_chain(self) -> Self::Coroutine
 	{
-		CoChainVec(self)
+		CoChainIter::new(self.into_iter())
 	}
 }
 
-pub struct CoChainVec<Co>(Vec<Co>);
-
-impl<Ctx, Co, Input> Coroutine<Ctx, Input> for CoChainVec<Co>
-where
-	Co: Coroutine<Ctx, Input, Output = Input>,
+pub struct CoChainIter<I: Iterator>
 {
-	type Output = Input;
-	type State = CoChainVecState<Co, Co::State, Input>;
+	current: Option<I::Item>,
+	iter: I,
+}
 
-	fn init(self, ctx: &mut Ctx, mut input: Input) -> CoResult<Self::State, Self::Output>
+impl<I: Iterator> CoChainIter<I>
+{
+	pub fn new(iter: I) -> Self
 	{
-		let mut vec: VecDeque<_> = self.0.into();
-		while let Some(co) = vec.pop_front()
+		Self
 		{
-			match co.init(ctx, input)
-			{
-				CoResult::RunNextFrame(co) =>
-				{
-					return CoResult::RunNextFrame(CoChainVecState(co, vec, PhantomData))
-				},
-				CoResult::Stop(res) => input = res,
-			}
+			current: None,
+			iter,
 		}
-
-		CoResult::Stop(input)
 	}
 }
 
-pub struct CoChainVecState<C, CS, I>(CS, VecDeque<C>, PhantomData<fn(I)>);
-
-impl<Ctx, Co, Input> CoroutineState<Ctx> for CoChainVecState<Co, Co::State, Input>
+impl<Ctx, Co, Iter> Coroutine<Ctx> for CoChainIter<Iter>
 where
-	Co: Coroutine<Ctx, Input, Output = Input>,
+	Co: Coroutine<Ctx>,
+	Iter: Iterator<Item = Co>,
 {
-	type Output = Input;
+	type Output = Option<Co::Output>;
 
 	fn resume(mut self, ctx: &mut Ctx) -> CoResult<Self, Self::Output>
 	{
-		let mut input = match self.0.resume(ctx)
+		let mut co = match self.current.take()
 		{
-			CoResult::RunNextFrame(co) =>
+			Some(co) => co,
+			None => match self.iter.next()
 			{
-				self.0 = co;
-				return CoResult::RunNextFrame(self);
-			},
-			CoResult::Stop(res) => res,
+				// self.current May be none on the first call to resume
+				// Return none if the iter is empty
+				None => return CoResult::Stop(None),
+				Some(co) => co,
+			}
 		};
-		
-		while let Some(co) = self.1.pop_front()
+
+		loop
 		{
-			match co.init(ctx, input)
+			match co.resume(ctx)
 			{
 				CoResult::RunNextFrame(co) =>
 				{
-					self.0 = co;
+					self.current = Some(co);
 					return CoResult::RunNextFrame(self);
 				},
-				CoResult::Stop(res) => input = res,
+				CoResult::Stop(res) =>
+				{
+					match self.iter.next()
+					{
+						None => return CoResult::Stop(Some(res)),
+						Some(next_co) => co = next_co,
+					}
+				},
 			}
 		}
-
-		CoResult::Stop(input)
 	}
 }
