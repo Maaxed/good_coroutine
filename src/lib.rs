@@ -20,7 +20,7 @@ pub mod prelude
 		Coroutine,
 		CoResult,
 		co_return,
-		co_yield,
+		co_await,
 		co_fn,
 		co_next_frame,
 		co_chain::co_chain,
@@ -50,7 +50,7 @@ pub fn co_return<Co, Output>(res: Output) -> CoResult<Co, Output>
 	CoResult::Stop(res)
 }
 
-pub fn co_yield<Ctx, C>(coroutine: C, ctx: &mut Ctx) -> CoResult<C, C::Output>
+pub fn co_await<Ctx, C>(coroutine: C, ctx: &mut Ctx) -> CoResult<C, C::Output>
 where
 	C: Coroutine<Ctx>
 {
@@ -123,7 +123,7 @@ mod tests
 					}));
 				}
 
-				co_yield(co_chain(vec), ctx)
+				co_await(co_chain(vec), ctx)
 			})
 		}
 
@@ -151,11 +151,11 @@ mod tests
 					{
 						ctx.push(i);
 
-						co_yield(co_next_frame(), ctx)
+						co_await(co_next_frame(), ctx)
 					}));
 				}
 
-				co_yield(co_chain(vec), ctx)
+				co_await(co_chain(vec), ctx)
 			})
 		}
 

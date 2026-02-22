@@ -15,7 +15,7 @@ A coroutine can be created from a function or from a closure using the ``co_fn``
 
 Coroutine functions don't use a 'yield' statement but instead return a ``CoResult``.
 The ``CoResult`` indicates if the coroutine should stop and return a result or continue running at the next update.
-In addition, a coroutine can run other coroutines and wait for their completion by calling and returning ``co_yield``.
+In addition, a coroutine can run other coroutines and wait for their completion by calling and returning ``co_await``.
 
 ```rust
 use good_coroutine::prelude::*;
@@ -35,7 +35,7 @@ fn coroutine_function() -> impl Coroutine<(), Output = ()>
 			)));
 		}
 
-		co_yield(co_chain(vec), ctx)
+		co_await(co_chain(vec), ctx)
 	})
 }
 
