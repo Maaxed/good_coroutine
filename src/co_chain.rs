@@ -2,16 +2,16 @@ use super::*;
 use variadics_please::{all_tuples, all_tuples_with_size};
 
 
-pub fn co_chain<Ctx, Co>(coroutine: Co) -> IgnoreOutput<Co::Coroutine>
+pub fn co_chain<Ctx, Co, M>(coroutine: Co) -> IgnoreOutput<Co::Coroutine>
 where
-	Co: IntoCoChain<Ctx>,
+	Co: IntoCoChain<Ctx, M>,
 {
 	IgnoreOutput(co_chain_with_output(coroutine))
 }
 
-pub fn co_chain_with_output<Ctx, Co>(coroutine: Co) -> Co::Coroutine
+pub fn co_chain_with_output<Ctx, Co, M>(coroutine: Co) -> Co::Coroutine
 where
-	Co: IntoCoChain<Ctx>,
+	Co: IntoCoChain<Ctx, M>,
 {
 	coroutine.into_co_chain()
 }
@@ -81,24 +81,26 @@ where
 
 
 
-pub trait IntoCoChain<Ctx>: Sized
+pub trait IntoCoChain<Ctx, M>: Sized
 {
 	type Coroutine: Coroutine<Ctx>;
 
 	fn into_co_chain(self) -> Self::Coroutine;
 }
 
+pub struct FnMarker;
+pub struct CoMarker;
 
 macro_rules! impl_co_chain_tuple
 {
 	($(($Co:ident, $var:ident)),*) =>
 	{
-		impl<Ctx, Chain, CoLast, F, I, $($Co,)*> IntoCoChain<Ctx> for ($($Co,)* F,)
+		impl<Ctx, Chain, CoLast, F, I, M, $($Co,)*> IntoCoChain<Ctx, (M, FnMarker)> for ($($Co,)* F,)
 		where
 			F: FnOnce(I) -> CoLast,
 			CoLast: Coroutine<Ctx>,
 			Chain: Coroutine<Ctx, Output = I>,
-			($($Co,)*): IntoCoChain<Ctx, Coroutine = Chain>
+			($($Co,)*): IntoCoChain<Ctx, M, Coroutine = Chain>
 		{
 			type Coroutine = CoChain<
 				Chain,
@@ -116,10 +118,33 @@ macro_rules! impl_co_chain_tuple
 				CoChain::A(($($var,)*).into_co_chain(), var_last)
 			}
 		}
+
+		impl<Ctx, Chain, CoLast, M, $($Co,)*> IntoCoChain<Ctx, (M, CoMarker)> for ($($Co,)* CoLast,)
+		where
+			CoLast: Coroutine<Ctx>,
+			Chain: Coroutine<Ctx>,
+			($($Co,)*): IntoCoChain<Ctx, M, Coroutine = Chain>
+		{
+			type Coroutine = CoChain<
+				Chain,
+				CoLast,
+				IdentityFn<CoLast>
+			>;
+
+			fn into_co_chain(self) -> Self::Coroutine
+			{
+				let (
+					$( $var, )*
+					var_last,
+				) = self;
+
+				CoChain::A(($($var,)*).into_co_chain(), IdentityFn(var_last))
+			}
+		}
 	}
 }
 
-impl<Ctx, T> IntoCoChain<Ctx> for (T,)
+impl<Ctx, T> IntoCoChain<Ctx, ()> for (T,)
 where
 	T: Coroutine<Ctx>,
 {
@@ -138,12 +163,12 @@ macro_rules! impl_co_chain_array
 {
 	($size:tt, $(($Co:ident, $var:ident)),*) =>
 	{
-		impl<Ctx, Co> IntoCoChain<Ctx> for [Co; $size]
+		impl<Ctx, Co> IntoCoChain<Ctx, [(); $size]> for [Co; $size]
 		where
 			Co: Coroutine<Ctx>,
 		{
 			type Coroutine = CoChain<
-				<[Co; $size-1] as IntoCoChain<Ctx>>::Coroutine,
+				<[Co; $size-1] as IntoCoChain<Ctx, [(); $size-1]>>::Coroutine,
 				Co,
 				IdentityFn<Co>,
 			>;
@@ -158,7 +183,7 @@ macro_rules! impl_co_chain_array
 	}
 }
 
-impl<Ctx, Co> IntoCoChain<Ctx> for [Co; 1]
+impl<Ctx, Co> IntoCoChain<Ctx, [(); 1]> for [Co; 1]
 where
 	Co: Coroutine<Ctx>,
 {
@@ -175,7 +200,7 @@ all_tuples_with_size!(impl_co_chain_array, 2, 10, Co, var);
 
 
 
-impl<Ctx, Co> IntoCoChain<Ctx> for Vec<Co>
+impl<Ctx, Co> IntoCoChain<Ctx, Vec<()>> for Vec<Co>
 where
 	Co: Coroutine<Ctx>,
 {
